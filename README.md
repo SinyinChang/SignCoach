@@ -2,9 +2,7 @@
 
 Accessible ASL practice prototype (Wizard-of-Oz). Participants watch a reference, practice with a live webcam, and receive **component-level** feedback on handshape, hand position, movement, and palm orientation.
 
-Webcam frames and MediaPipe landmarks are processed **locally in the browser**. Video is not recorded or uploaded.
-
-> MediaPipe is used only for **camera tracking guidance** (hand/face visibility). It does **not** determine whether an ASL sign is correct. ASL performance feedback is provided by a human Wizard through `/wizard`.
+MediaPipe provides local camera guidance. A human operator replays the submitted sign and chooses the ASL feedback in a separate browser tab.
 
 ## Quick start
 
@@ -13,19 +11,17 @@ npm install
 npm run dev
 ```
 
-Open the URL shown in the terminal (typically `http://localhost:5173`).
+Use Node.js 22.12+ and a current browser such as Chrome or Edge. Open the local URL shown in the terminal (typically `http://localhost:5173`). The command starts the web app and its review API together.
 
-### Participant + Wizard (same computer)
+### Participant and operator tabs
 
-1. Participant tab: normal SignCoach UI (`/`)  
-2. Researcher tab: open `/wizard`  
-3. Participant selects a sign → Start Camera → Start Attempt → Finish Attempt  
-4. Participant sees **Checking your sign...**  
-5. Wizard selects feedback → **Send Feedback**  
-6. Participant automatically sees **Your Feedback**  
-7. **Try Again** starts a clean new attempt
+1. Open the SignCoach home page in the participant tab.
+2. Append the private `/wizard#…` path printed in the terminal to the same server URL. Open it in a separate tab on the operator’s display or device so only the participant view is visible to the participant. A new link is generated on each server start.
+3. In the participant tab, select a sign, then choose **Start Camera**, **Start Attempt**, and **Finish Attempt**.
+4. In the operator tab, replay the clip, choose feedback for each component, and click **Send Feedback**.
+5. The participant tab opens **Your Feedback** automatically. **Try Again** starts a fresh attempt.
 
-Communication uses `BroadcastChannel('signcoach-wizard')` with a `localStorage` fallback.
+The server supports one pending attempt at a time. For a built version, run `npm run build` and then `npm run preview` to serve the app and its review API. If using a separate participant device, serve the app over HTTPS so the browser can access its webcam.
 
 ## Supported signs
 
@@ -41,9 +37,8 @@ Wizard message presets: [`src/data/wizardFeedbackOptions.js`](src/data/wizardFee
 
 ## Privacy
 
-- `getUserMedia` video stays in the page  
-- No default recording, saving, or uploading of webcam footage  
-- Practice notice: “Your camera is used for practice and your video is not recorded or uploaded.”
+- The camera preview stays in the browser. **Start Attempt** captures silent video. **Finish Attempt** submits it to the review server, and attempts submit automatically at the 30-second limit.
+- The server holds the clip in memory until feedback is sent, the attempt is cancelled, or 10 minutes elapse. The operator link is required to retrieve the clip.
 
 ## Accessibility
 

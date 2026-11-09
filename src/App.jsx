@@ -10,11 +10,14 @@ export default function App() {
   return (
     <BrowserRouter>
       <div className="app-shell">
-        <a className="skip-link" href="#main-content">
+        <a className="skip-link" href="#main-content" onClick={(event) => {
+          event.preventDefault();
+          document.getElementById('main-content').focus();
+        }}>
           Skip to main content
         </a>
         <Header />
-        <main id="main-content">
+        <main id="main-content" tabIndex={-1}>
           <Routes>
             <Route path="/" element={<Home />} />
             <Route path="/sign/:signId" element={<Tutorial />} />

@@ -653,6 +653,22 @@ main {
   font-family: var(--font-sans);
 }
 
+.review-video {
+  margin-bottom: 1rem;
+}
+
+.review-video h2 {
+  margin-top: 0;
+}
+
+.review-video video {
+  display: block;
+  width: 100%;
+  max-width: 42rem;
+  max-height: 55vh;
+  background: #000;
+}
+
 .wizard-grid {
   display: grid;
   gap: 1rem;

@@ -1,16 +1,13 @@
-import { Link, Navigate, useParams, useSearchParams } from 'react-router-dom';
+import { Link, Navigate, useLocation, useParams } from 'react-router-dom';
 import FeedbackPanel from '../components/FeedbackPanel';
-import DebugPanel from '../components/DebugPanel';
 import { getSignById } from '../data/signs';
-import { useFeedbackMode } from '../hooks/useFeedbackMode';
-import { clearDisplayedFeedback } from '../feedback/feedbackStore';
+import { clearDisplayedFeedback, readDisplayedFeedback } from '../feedback/feedbackStore';
 
 export default function Feedback() {
   const { signId } = useParams();
   const sign = getSignById(signId);
-  const [searchParams] = useSearchParams();
-  const showDebug = searchParams.get('debug') === '1';
-  const { feedback } = useFeedbackMode(signId);
+  const { state } = useLocation();
+  const feedback = readDisplayedFeedback(signId) ?? state?.feedback;
 
   if (!sign) return <Navigate to="/" replace />;
 
@@ -28,10 +25,7 @@ export default function Feedback() {
           </p>
         </div>
       ) : (
-        <>
-          <FeedbackPanel feedback={feedback} signName={sign.name} />
-          <DebugPanel feedback={feedback} visible={showDebug} />
-        </>
+        <FeedbackPanel feedback={feedback} signName={sign.name} />
       )}
 
       <div className="btn-row">

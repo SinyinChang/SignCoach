@@ -1,140 +1,35 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link, Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useCallback } from 'react';
+import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import VideoDemo from '../components/VideoDemo';
 import WebcamView from '../components/WebcamView';
 import { getSignById } from '../data/signs';
 import { useCamera } from '../hooks/useCamera';
 import { useHandTracking } from '../hooks/useHandTracking';
-import {
-  createAttemptId,
-  publishParticipantState,
-  saveDisplayedFeedback,
-  subscribeWizardChannel,
-} from '../feedback/feedbackStore';
-import { makeFeedbackPayload } from '../feedback/feedbackSchema';
-
-function toFeedbackPayload(message) {
-  if (message?.payload) return message.payload;
-  if (message?.feedback) {
-    return makeFeedbackPayload({
-      source: 'wizard',
-      signId: message.signId,
-      components: message.feedback,
-      meta: { attemptId: message.attemptId ?? null },
-    });
-  }
-  return null;
-}
+import { useReviewAttempt } from '../hooks/useReviewAttempt';
+import { saveDisplayedFeedback } from '../feedback/feedbackStore';
 
 export default function Practice() {
   const { signId } = useParams();
   const sign = getSignById(signId);
-  const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
-  const debugDefault = searchParams.get('debug') === '1';
+  return sign ? <PracticeSign key={signId} sign={sign} /> : <Navigate to="/" replace />;
+}
 
+function PracticeSign({ sign }) {
+  const navigate = useNavigate();
   const { videoRef, active, error, starting, startCamera, stopCamera } = useCamera();
   const tracking = useHandTracking(videoRef, {
     enabled: active,
     includeFace: true,
   });
 
-  const [showLandmarks, setShowLandmarks] = useState(debugDefault);
-  const [attemptPhase, setAttemptPhase] = useState('idle'); // idle | recording | waiting
-  const attemptIdRef = useRef(null);
-  const waitingRef = useRef(false);
-
-  const broadcastState = useCallback(
-    (status, attemptId = attemptIdRef.current) => {
-      if (!sign) return;
-      publishParticipantState({
-        signId: sign.id,
-        signName: sign.name,
-        status,
-        attemptId,
-      });
-    },
-    [sign],
-  );
-
-  // Announce current sign when entering practice; clear attempt on leave.
-  useEffect(() => {
-    if (!sign) return undefined;
-    broadcastState('practicing', null);
-    return () => {
-      publishParticipantState({
-        signId: sign.id,
-        signName: sign.name,
-        status: 'idle',
-        attemptId: null,
-      });
-    };
-  }, [sign, broadcastState]);
-
-  // Reply when Wizard asks for current state.
-  useEffect(() => {
-    if (!sign) return undefined;
-    return subscribeWizardChannel((message) => {
-      if (message?.type === 'REQUEST_STATE') {
-        const status =
-          attemptPhase === 'waiting'
-            ? 'waiting_for_feedback'
-            : attemptPhase === 'recording'
-              ? 'attempt_started'
-              : 'practicing';
-        broadcastState(status, attemptIdRef.current);
-        return;
-      }
-
-      if (message?.type !== 'SIGN_FEEDBACK') return;
-      if (!waitingRef.current) return;
-      if (message.signId && message.signId !== sign.id) return;
-      if (
-        attemptIdRef.current &&
-        message.attemptId &&
-        message.attemptId !== attemptIdRef.current
-      ) {
-        return;
-      }
-
-      const payload = toFeedbackPayload(message);
-      if (!payload) return;
-
-      saveDisplayedFeedback(payload);
-      waitingRef.current = false;
-      setAttemptPhase('idle');
-      attemptIdRef.current = null;
-      broadcastState('practicing', null);
-      navigate(`/feedback/${sign.id}`);
-    });
-  }, [sign, attemptPhase, broadcastState, navigate]);
-
-  if (!sign) return <Navigate to="/" replace />;
-
-  const onStartAttempt = () => {
-    const id = createAttemptId();
-    attemptIdRef.current = id;
-    waitingRef.current = false;
-    setAttemptPhase('recording');
-    broadcastState('attempt_started', id);
-  };
-
-  const onFinishAttempt = () => {
-    if (attemptPhase !== 'recording') return;
-    waitingRef.current = true;
-    setAttemptPhase('waiting');
-    broadcastState('waiting_for_feedback', attemptIdRef.current);
-  };
-
-  const onRetry = () => {
-    waitingRef.current = false;
-    attemptIdRef.current = null;
-    setAttemptPhase('idle');
-    broadcastState('practicing', null);
-  };
-
-  const isWaiting = attemptPhase === 'waiting';
-  const isRecording = attemptPhase === 'recording';
+  const showFeedback = useCallback((feedback) => {
+    const saved = saveDisplayedFeedback(feedback);
+    navigate(`/feedback/${sign.id}`, { state: saved ? null : { feedback } });
+  }, [navigate, sign.id]);
+  const attempt = useReviewAttempt(sign.id, showFeedback);
+  const isRecording = attempt.phase === 'recording';
+  const isUploading = attempt.phase === 'uploading';
+  const isWaiting = attempt.phase === 'waiting';
 
   return (
     <div>
@@ -173,12 +68,12 @@ export default function Practice() {
           <WebcamView
             videoRef={videoRef}
             active={active}
-            hands={tracking.hands}
-            showLandmarks={showLandmarks}
           />
 
           <p className="privacy-note" role="note">
-            Your camera is used for practice and your video is not recorded or uploaded.
+            Start Attempt captures video without audio. The clip is sent for review when
+            you finish or reach 30 seconds. The server removes it after review, cancellation,
+            or 10 minutes.
           </p>
 
           {error && (
@@ -207,21 +102,12 @@ export default function Practice() {
               {tracking.status.text}
             </div>
           )}
-
-          <div className="toggle-row">
-            <label>
-              <input
-                type="checkbox"
-                checked={showLandmarks}
-                onChange={(e) => setShowLandmarks(e.target.checked)}
-              />
-              Show hand landmarks (developer)
-            </label>
-          </div>
         </section>
       </div>
 
-      {!isWaiting && (
+      {attempt.error && <div className="alert alert-error" role="alert">{attempt.error}</div>}
+
+      {!isWaiting && !isUploading && (
         <div className="btn-row" role="group" aria-label="Practice controls">
           {!active ? (
             <button
@@ -233,7 +119,7 @@ export default function Practice() {
               {starting ? 'Starting camera…' : 'Start Camera'}
             </button>
           ) : (
-            <button type="button" className="btn btn-secondary" onClick={stopCamera}>
+            <button type="button" className="btn btn-secondary" onClick={stopCamera} disabled={isRecording}>
               Stop Camera
             </button>
           )}
@@ -241,7 +127,7 @@ export default function Practice() {
           <button
             type="button"
             className="btn btn-accent"
-            onClick={onStartAttempt}
+            onClick={() => attempt.startAttempt(videoRef.current?.srcObject)}
             disabled={!active || isRecording}
           >
             Start Attempt
@@ -249,31 +135,33 @@ export default function Practice() {
           <button
             type="button"
             className="btn btn-primary"
-            onClick={onFinishAttempt}
+            onClick={attempt.finishAttempt}
             disabled={!isRecording}
           >
             Finish Attempt
           </button>
-          <button type="button" className="btn btn-secondary" onClick={onRetry}>
-            Retry
-          </button>
+          {isRecording && (
+            <button type="button" className="btn btn-secondary" onClick={attempt.cancelAttempt}>
+              Cancel Attempt
+            </button>
+          )}
           <Link className="btn btn-ghost" to={`/sign/${sign.id}`}>
             Watch Tutorial Again
           </Link>
         </div>
       )}
 
-      {isWaiting && (
+      {(isUploading || isWaiting) && (
         <div className="analyzing panel" role="status" aria-live="assertive">
-          <strong>Checking your sign...</strong>
+          <strong>{isUploading ? 'Submitting your attempt…' : 'Preparing your feedback…'}</strong>
           <div className="analyzing-bar" aria-hidden="true">
             <span />
           </div>
           <p style={{ margin: 0, color: 'var(--color-ink-muted)' }}>
-            Please wait while SignCoach reviews your attempt.
+            Feedback will appear here when it’s ready.
           </p>
           <div className="btn-row" style={{ marginTop: '1rem' }}>
-            <button type="button" className="btn btn-secondary" onClick={onRetry}>
+            <button type="button" className="btn btn-secondary" onClick={attempt.cancelAttempt}>
               Cancel and retry
             </button>
           </div>

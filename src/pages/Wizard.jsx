@@ -1,11 +1,6 @@
-/**
- * Researcher-only Wizard-of-Oz control panel (/wizard).
- * Not linked from participant navigation.
- * Observes participant attempt state over BroadcastChannel and sends ASL feedback.
- */
-import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { SIGNS, getSignById } from '../data/signs';
+import { useEffect, useState } from 'react';
+import { Link, useLocation } from 'react-router-dom';
+import { getSignById } from '../data/signs';
 import {
   WIZARD_COMPONENTS,
   WIZARD_STATUS_OPTIONS,
@@ -15,10 +10,10 @@ import {
 } from '../data/wizardFeedbackOptions';
 import { makeComponentResult } from '../feedback/feedbackSchema';
 import {
-  readParticipantState,
-  requestParticipantState,
+  pollReview,
+  readAttemptClip,
+  readPendingAttempt,
   sendWizardFeedback,
-  subscribeWizardChannel,
 } from '../feedback/feedbackStore';
 
 function blankComponentState(signId) {
@@ -35,63 +30,97 @@ function blankComponentState(signId) {
   return state;
 }
 
-function statusLabel(status) {
-  switch (status) {
-    case 'waiting_for_feedback':
-      return 'Waiting for feedback';
-    case 'attempt_started':
-      return 'Attempt in progress';
-    case 'practicing':
-      return 'On practice page';
-    case 'idle':
-      return 'Idle';
-    default:
-      return status || 'Unknown';
-  }
-}
-
-function resolveValidSignId(candidate) {
-  if (candidate && getSignById(candidate)) return candidate;
-  return SIGNS[0]?.id || 'nice-to-meet-you';
-}
-
 export default function Wizard() {
-  const [participant, setParticipant] = useState(() => readParticipantState());
-  const initialSignId = resolveValidSignId(participant?.signId);
-  const [signId, setSignId] = useState(initialSignId);
-  const [components, setComponents] = useState(() => blankComponentState(initialSignId));
-  const [statusNote, setStatusNote] = useState('');
+  const { hash } = useLocation();
+  const accessKey = /^#[a-f0-9]{64}$/.test(hash) ? hash.slice(1) : '';
+  return <OperatorConsole key={accessKey} accessKey={accessKey} />;
+}
 
-  const sign = useMemo(() => getSignById(signId), [signId]);
+function OperatorConsole({ accessKey }) {
+  const [attempt, setAttempt] = useState(null);
+  const [connected, setConnected] = useState(false);
+  const [error, setError] = useState('');
+  const [sentId, setSentId] = useState(null);
 
   useEffect(() => {
-    requestParticipantState();
-    return subscribeWizardChannel((message) => {
-      if (message?.type === 'PARTICIPANT_STATE') {
-        setParticipant(message);
-        const nextId = resolveValidSignId(message.signId);
-        if (message.signId && getSignById(message.signId)) {
-          setSignId((current) => {
-            if (current !== nextId) {
-              setComponents(blankComponentState(nextId));
-            }
-            return nextId;
-          });
-        }
-      }
+    if (!accessKey) return;
+    return pollReview(
+      (signal) => readPendingAttempt(accessKey, signal),
+      (pending) => {
+        setAttempt(pending);
+        setConnected(true);
+        setError('');
+      },
+      (requestError) => {
+        setError(requestError.status === 401
+          ? requestError.message
+          : 'Connection interrupted. Reconnecting to the review server…');
+        setConnected(false);
+        if (requestError.status === 401) return false;
+      },
+    );
+  }, [accessKey]);
+
+  return (
+    <div>
+      <div className="page-header">
+        <h1>Operator Console</h1>
+        <p>Replay the submitted sign, then choose feedback for each component.</p>
+      </div>
+      {!accessKey && (
+        <p className="panel">Open the private operator link shown in the server terminal.</p>
+      )}
+      {error && <p className="alert alert-error" role="alert">{error}</p>}
+      {accessKey && !connected && !error && <p role="status">Connecting to the review server…</p>}
+      {connected && (!attempt || attempt.id === sentId) && (
+        <p className="panel" role="status">
+          {sentId ? 'Feedback sent. Waiting for the next attempt.' : 'Waiting for a participant to submit an attempt.'}
+        </p>
+      )}
+      {attempt && attempt.id !== sentId && (
+        <AttemptReview
+          key={attempt.id}
+          accessKey={accessKey}
+          attempt={attempt}
+          connected={connected}
+          onSent={() => setSentId(attempt.id)}
+        />
+      )}
+      {connected && (
+        <div className="btn-row">
+          <Link className="btn btn-ghost" to="/" target="_blank" rel="noreferrer">
+            Open participant tab
+          </Link>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AttemptReview({ accessKey, attempt, connected, onSent }) {
+  const { id, signId } = attempt;
+  const [components, setComponents] = useState(() => blankComponentState(signId));
+  const [clipUrl, setClipUrl] = useState('');
+  const [clipError, setClipError] = useState('');
+  const [clipRetry, setClipRetry] = useState(0);
+  const [sendError, setSendError] = useState('');
+  const [sending, setSending] = useState(false);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let url;
+    readAttemptClip(accessKey, id, controller.signal).then((clip) => {
+      if (controller.signal.aborted) return;
+      url = URL.createObjectURL(clip);
+      setClipUrl(url);
+    }).catch((requestError) => {
+      if (!controller.signal.aborted) setClipError(requestError.message || 'Could not load the clip.');
     });
-  }, []);
-
-  // When participant finishes an attempt, lock wizard onto that sign.
-  useEffect(() => {
-    if (
-      participant?.signId &&
-      participant.status === 'waiting_for_feedback' &&
-      getSignById(participant.signId)
-    ) {
-      setSignId(participant.signId);
-    }
-  }, [participant]);
+    return () => {
+      controller.abort();
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [accessKey, id, clipRetry]);
 
   const updateComponent = (key, patch) => {
     setComponents((prev) => ({
@@ -113,11 +142,9 @@ export default function Wizard() {
     return entry.improveChoice || getImproveOptions(signId, key)[0] || '';
   };
 
-  const canSend =
-    participant?.status === 'waiting_for_feedback' &&
-    (!participant.signId || participant.signId === signId);
-
-  const sendFeedback = () => {
+  const sendFeedback = async () => {
+    setSending(true);
+    setSendError('');
     const payloadComponents = {};
     for (const { key } of WIZARD_COMPONENTS) {
       const entry = components[key];
@@ -127,73 +154,43 @@ export default function Wizard() {
       );
     }
 
-    const attemptId = participant?.attemptId ?? null;
-    sendWizardFeedback({
-      signId,
-      attemptId,
-      components: payloadComponents,
-    });
-    setStatusNote('Feedback sent successfully.');
+    try {
+      await sendWizardFeedback(accessKey, id, payloadComponents);
+      onSent();
+    } catch (requestError) {
+      setSendError(requestError.message || 'Could not send feedback.');
+      setSending(false);
+    }
   };
 
   return (
     <div>
-      <div className="page-header">
-        <h1>Wizard Mode</h1>
-        <p>
-          Researcher control panel for this Wizard-of-Oz prototype. Select feedback
-          for the participant’s attempt, then click Send Feedback.
-        </p>
-      </div>
-
-      <div className="panel" style={{ marginBottom: '1rem' }} aria-live="polite">
-        <p style={{ marginTop: 0 }}>
-          <strong>Current Sign:</strong>{' '}
-          {(participant?.signId && getSignById(participant.signId)?.name) ||
-            sign?.name ||
-            '—'}
-        </p>
-        <p>
-          <strong>Participant Status:</strong>{' '}
-          {statusLabel(participant?.status || 'idle')}
-        </p>
-        {participant?.attemptId && (
-          <p style={{ marginBottom: 0, color: 'var(--color-ink-muted)' }}>
-            Attempt ID: <code>{participant.attemptId}</code>
-          </p>
+      <section className="panel review-video" aria-labelledby="review-video-title">
+        <h2 id="review-video-title">{getSignById(signId).name}</h2>
+        {clipUrl && (
+          <video
+            src={clipUrl}
+            controls
+            playsInline
+            muted
+            aria-label="Silent replay of the participant’s sign"
+            onError={() => setClipError('The clip could not be played in this browser.')}
+          />
         )}
-        {!canSend && (
-          <p style={{ marginBottom: 0, marginTop: '0.75rem' }} className="mode-chip">
-            Waiting for the participant to finish an attempt before sending feedback.
-          </p>
+        {!clipUrl && !clipError && <p role="status">Loading attempt video…</p>}
+        {clipError && (
+          <div>
+            <p className="alert alert-error" role="alert">{clipError}</p>
+            <button type="button" className="btn btn-secondary" onClick={() => {
+              setClipUrl('');
+              setClipError('');
+              setClipRetry((count) => count + 1);
+            }}>
+              Reload clip
+            </button>
+          </div>
         )}
-        {canSend && (
-          <p style={{ marginBottom: 0, marginTop: '0.75rem' }} className="mode-chip">
-            Participant is waiting — select feedback and click Send Feedback.
-          </p>
-        )}
-      </div>
-
-      <div className="panel" style={{ marginBottom: '1rem' }}>
-        <label style={{ display: 'grid', gap: '0.35rem', fontWeight: 700 }}>
-          Sign for this feedback
-          <select
-            value={signId}
-            onChange={(e) => {
-              const next = e.target.value;
-              setSignId(next);
-              setComponents(blankComponentState(next));
-            }}
-            aria-label="Sign for feedback"
-          >
-            {SIGNS.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
+      </section>
 
       <div className="wizard-grid">
         {WIZARD_COMPONENTS.map(({ key, label }) => {
@@ -266,6 +263,7 @@ export default function Wizard() {
                   Custom message
                   <textarea
                     rows={2}
+                    maxLength={1000}
                     value={entry.customMessage}
                     onChange={(e) => updateComponent(key, { customMessage: e.target.value })}
                     aria-label={`${label} custom message`}
@@ -282,33 +280,12 @@ export default function Wizard() {
           type="button"
           className="btn btn-primary"
           onClick={sendFeedback}
-          disabled={!canSend}
+          disabled={!connected || sending || (!clipUrl && !clipError)}
         >
-          Send Feedback
+          {sending ? 'Sending…' : 'Send Feedback'}
         </button>
-        <button
-          type="button"
-          className="btn btn-secondary"
-          onClick={() => requestParticipantState()}
-        >
-          Refresh participant status
-        </button>
-        <Link
-          className="btn btn-ghost"
-          to={`/practice/${signId}`}
-          target="_blank"
-          rel="noreferrer"
-        >
-          Open Practice (new tab)
-        </Link>
       </div>
-
-      {statusNote && (
-        <div className="status-banner" role="status" style={{ marginTop: '1rem' }}>
-          {statusNote}
-        </div>
-      )}
-
+      {sendError && <p className="alert alert-error" role="alert">{sendError}</p>}
     </div>
   );
 }

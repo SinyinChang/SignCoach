@@ -1,4 +1,4 @@
-import { STATUS } from '../data/feedbackMessages';
+import { STATUS } from '../data/feedbackMessages.js';
 
 export const COMPONENT_KEYS = ['handshape', 'position', 'movement', 'orientation'];
 
