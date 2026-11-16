@@ -16,12 +16,22 @@ Use Node.js 22.12+ and a current browser such as Chrome or Edge. Open the local 
 ### Participant and operator tabs
 
 1. Open the SignCoach home page in the participant tab.
-2. Append the private `/wizard#…` path printed in the terminal to the same server URL. Open it in a separate tab on the operator’s display or device so only the participant view is visible to the participant. A new link is generated on each server start.
+2. Open the **Private Wizard URL** printed in the terminal on the operator’s display. A new link is generated on each server start.
 3. In the participant tab, select a sign, then choose **Start Camera**, **Start Attempt**, and **Finish Attempt**.
 4. In the operator tab, replay the clip, choose feedback for each component, and click **Send Feedback**.
 5. The participant tab opens **Your Feedback** automatically. **Try Again** starts a fresh attempt.
 
 The server supports one pending attempt at a time. For a built version, run `npm run build` and then `npm run preview` to serve the app and its review API. If using a separate participant device, serve the app over HTTPS so the browser can access its webcam.
+
+### Remote participant session
+
+On Windows, install [cloudflared](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/downloads/) once with `winget install --id Cloudflare.cloudflared -e`, then reopen PowerShell. From the SignCoach folder, run:
+
+```powershell
+npm run study
+```
+
+Share the **Participant URL to share** with one participant at a time. Open the **Private Wizard URL** on your own computer. Both URLs use the same review server. Keep the terminal running throughout the session and press Ctrl+C when finished. Anyone with the temporary participant URL can open it.
 
 ## Supported signs
 

@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { isIP } from 'node:net';
 import { getSignById } from '../src/data/signs.js';
 import { STATUS } from '../src/data/feedbackMessages.js';
 import { COMPONENT_KEYS } from '../src/feedback/feedbackSchema.js';
@@ -60,7 +61,10 @@ export default function reviewServer() {
     }
 
     server.httpServer?.once('listening', () => {
-      server.config.logger.info(`  Private operator tab (append to the server URL): /wizard#${key}`);
+      const { address, port } = server.httpServer.address();
+      const host = address === '0.0.0.0' || address === '::' ? 'localhost'
+        : isIP(address) === 6 ? `[${address}]` : address;
+      server.config.logger.info(`  Private Wizard URL: http://${host}:${port}/wizard#${key}`);
     });
     server.httpServer?.once('close', () => {
       for (const id of attempts.keys()) removeAttempt(id);

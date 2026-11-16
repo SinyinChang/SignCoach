@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "oxlint",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "study": "node scripts/study.js"
   },
   "dependencies": {
     "@mediapipe/tasks-vision": "^1.2.0",
